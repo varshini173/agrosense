@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgroSense</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--g:#2e7d32;--bg:#f4f7f2;--c:#fff;--t:#1d2b1f;--b:#dde5d9}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--t)}
+header{background:var(--g);color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}
+main{max-width:1000px;margin:20px auto;padding:0 14px}.card{background:var(--c);border:1px solid var(--b);border-radius:10px;padding:16px;margin-bottom:16px}
+input,select,button{padding:9px;margin:4px 0;border:1px solid var(--b);border-radius:6px;font-size:14px}
+button{background:var(--g);color:#fff;border:0;cursor:pointer}button.alt{background:#fff;color:var(--g);border:1px solid var(--g)}
+#auth{max-width:340px;margin:60px auto}#auth input{width:100%}.err{color:#c62828;min-height:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.big{font-size:22px;font-weight:600}.alert{background:#fff3e0;border-left:4px solid #ef6c00;padding:8px 12px;margin:6px 0;border-radius:4px}
+.ok{background:#e8f5e9;border-left:4px solid var(--g);padding:8px 12px;border-radius:4px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px;border-bottom:1px solid var(--b)}
+.tw{overflow-x:auto;max-height:320px;overflow-y:auto}.hide{display:none}
+</style></head><body>
+<header><b>🌱 AgroSense</b><span id="who" class="hide"><span id="uname"></span> <button class="alt" onclick="logout()">Logout</button></span></header>
+
+<div id="auth" class="card">
+  <h3 id="atitle">Login</h3>
+  <input id="uid" placeholder="User ID"><input id="nm" class="hide" placeholder="Full name">
+  <input id="pw" type="password" placeholder="Password (6+ chars)">
+  <div class="err" id="err"></div>
+  <button onclick="submitAuth()" id="abtn">Login</button>
+  <button class="alt" onclick="toggle()" id="tbtn">Create account</button>
+</div>
+
+<main id="dash" class="hide">
+  <div class="card"><b>Alerts</b><div id="alerts"></div></div>
+  <div class="grid" id="latest"></div><br>
+  <div class="card"><b>Trend</b> &nbsp;<select id="dev" onchange="draw()"></select><canvas id="ch" height="110"></canvas></div>
+  <div class="card"><b>History</b><br>
+    From <input type="datetime-local" id="from"> To <input type="datetime-local" id="to">
+    <button onclick="load()">Filter</button><button class="alt" onclick="clearF()">Clear</button>
+    <div class="tw"><table><thead><tr><th>Time</th><th>Device</th><th>Temp °C</th><th>Humidity %</th><th>Soil %</th></tr></thead><tbody id="rows"></tbody></table></div>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);let reg=false,data=[],chart,timer;
+async function api(p,m='GET',b){const r=await fetch('/api'+p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error');return j}
+function toggle(){reg=!reg;$('nm').classList.toggle('hide',!reg);$('atitle').textContent=$('abtn').textContent=reg?'Register':'Login';$('tbtn').textContent=reg?'Back to login':'Create account';$('err').textContent=''}
+async function submitAuth(){try{
+  if(reg){await api('/register','POST',{userId:$('uid').value,name:$('nm').value,password:$('pw').value});toggle();$('err').textContent='Registered! Please log in.';return}
+  show(await api('/login','POST',{userId:$('uid').value,password:$('pw').value}))}catch(e){$('err').textContent=e.message}}
+function show(u){$('auth').classList.add('hide');$('dash').classList.remove('hide');$('who').classList.remove('hide');$('uname').textContent=u.name;load();timer=setInterval(load,5000)}
+async function logout(){await api('/logout','POST');clearInterval(timer);location.reload()}
+function clearF(){$('from').value=$('to').value='';load()}
+async function load(){try{
+  let q='?limit=500';if($('from').value)q+='&from='+new Date($('from').value).toISOString();if($('to').value)q+='&to='+new Date($('to').value).toISOString();
+  data=await api('/telemetry'+q);render()}catch(e){location.reload()}}
+function render(){
+  const devs=[...new Set(data.map(d=>d.deviceId))].sort(),sel=$('dev').value;
+  $('dev').innerHTML=devs.map(d=>`<option ${d===sel?'selected':''}>${d}</option>`).join('');
+  let al='',cards='';
+  devs.forEach(d=>{const r=data.find(x=>x.deviceId===d),w=[];
+    if(r.soilMoisture<30)w.push('soil too dry – irrigate');if(r.temperature>38)w.push('temperature too high');if(r.humidity<30)w.push('humidity very low');
+    w.forEach(m=>al+=`<div class="alert"><b>${d}</b>: ${m}</div>`);
+    cards+=`<div class="card"><b>${d}</b><div class="big">🌡 ${r.temperature}°C</div><div class="big">💧 ${r.humidity}%</div><div class="big">🌱 ${r.soilMoisture}%</div><small>${new Date(r.recordedAt).toLocaleTimeString()}</small></div>`});
+  $('alerts').innerHTML=al||'<div class="ok">All readings normal.</div>';$('latest').innerHTML=cards||'<div class="card">No data yet. Run simulator.py</div>';
+  $('rows').innerHTML=data.slice(0,200).map(r=>`<tr><td>${new Date(r.recordedAt).toLocaleString()}</td><td>${r.deviceId}</td><td>${r.temperature}</td><td>${r.humidity}</td><td>${r.soilMoisture}</td></tr>`).join('');draw()}
+function draw(){const d=data.filter(x=>x.deviceId===$('dev').value).slice(0,40).reverse(),L=d.map(x=>new Date(x.recordedAt).toLocaleTimeString());
+  const ds=[['Temperature °C','temperature','#e53935'],['Humidity %','humidity','#1e88e5'],['Soil moisture %','soilMoisture','#2e7d32']].map(([l,k,c])=>({label:l,data:d.map(x=>x[k]),borderColor:c,tension:.3,pointRadius:0}));
+  if(chart){chart.data.labels=L;chart.data.datasets=ds;chart.update('none')}else chart=new Chart($('ch'),{type:'line',data:{labels:L,datasets:ds}})}
+api('/me').then(show).catch(()=>{});
+</script></body></html>
